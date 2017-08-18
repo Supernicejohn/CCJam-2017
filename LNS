@@ -1,0 +1,422 @@
+--LNS setup 
+local __error = error 
+error = function(msg,lvl)
+	os.queueEvent("error",msg,lvl)
+end
+local args = {...}
+
+
+-- Start definitions -- (double comment!) I'll get minus points for the organization of this part won't I... :)
+local fileName = args[1] or ""
+local cursorTimer = os.startTimer(0.5)
+local settings = {w = 0, h = 0, highlighting = false, bottomBarHeight = 0, rightBarWidth = 0}
+local highLightGrid = {[1] = ""}
+local highLightGridMt = {__index = function(_,k) highLightGrid[k] = ""; return "" end} 
+setmetatable(highLightGrid,highLightGridMt)
+local theme = {currentTheme = "Default", Default = {background = "f", highLightColor = "7", textcolor = "0", c1 = "b", c2 = d, cursor = "a"}}
+settings.w,settings.h = term.getSize()
+local funcs = {}
+local specialKeys = {[keys.leftShift] = 0, [keys.rightShift] = 0, [29] = 0, [157] = 0}
+local text = {[1] = ""}
+local textMt = {__index = function(_,i) return ""; end}
+setmetatable(text,textMt)
+local Cursor = {x = 1, y = 1, insert = true}
+local Screen = {x = 1, y = 1, w = 51, h = 19}
+local undoStack = {}
+
+-- Undo functions
+
+function funcs.undo()
+	if #undoStack > 0 then
+		text = undoStack[#undoStack]
+		undoStack[#undoStack] = nil
+	end
+	Cursor.y = math.min(#text,Cursor.y)
+	Cursor.x = #text[Cursor.y]+1
+	os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+end
+function funcs.undoPushState()
+	undoStack[#undoStack+1] = {unpack(text)}
+	if #undoStack > 255 then
+		table.remove(undoStack,1)
+	end
+end
+
+
+
+-- Save/load+undo functions
+function funcs.loadFile(path)
+	if fs.exists(path) then
+		local file = fs.open(path,"r")
+		local i = 1
+		local c = true
+		for line in file.readLine do
+			text[i] = line
+			if i > 16384 and c then
+				if funcs.dialogBox("Very large file!\nDo you wish to continue?",1) then
+					c = false
+				else
+					error = __error
+					error("Terminated")
+				end
+			end
+			i = i + 1
+		end
+	end
+end
+function funcs.saveFile(path)
+	if fs.exists(path) then
+		if funcs.dialogBox("File "..path.." already exists\nContinue?",1) then
+			funcs.save(path)
+		else
+			return false
+		end
+	else
+		funcs.save(path)
+	end
+end
+function funcs.save(path)
+	local file = fs.open(path,"w")
+	for i=1,#text do
+		file.writeLine(text[i])
+	end
+end
+-- Text manipulation functions
+function funcs.char(c) -- adds a single character according to Cursor position
+	text[Cursor.y] = text[Cursor.y]:sub(1,Cursor.x+(Cursor.insert and 0 or -1))..c..text[Cursor.y]:sub(Cursor.x+1,#text[Cursor.y])
+	Cursor.x = Cursor.x + 1
+	os.queueEvent("redraw",Cursor.y,Cursor.y)
+	funcs.cursor(true)
+end
+
+function funcs.backspace() -- removes a single character according to Cursor position
+	if Cursor.x > 1 then
+		text[Cursor.y] = text[Cursor.y]:sub(1,Cursor.x-2)..text[Cursor.y]:sub(Cursor.x,#text[Cursor.y])
+		Cursor.x = Cursor.x - 1
+		os.queueEvent("redraw",Cursor.y,Cursor.y)
+	elseif Cursor.y > 1 then
+		Cursor.x = #text[Cursor.y-1]+1
+		text[Cursor.y-1] = text[Cursor.y-1]..text[Cursor.y]
+		table.remove(text,Cursor.y)
+		Cursor.y = Cursor.y - 1
+		os.queueEvent("redraw",Cursor.y,Cursor.y+1)
+	end
+	funcs.cursor(true)
+end
+
+function funcs.enter() -- adds a newline
+	table.insert(text,Cursor.y+1,"")
+	text[Cursor.y+1] = text[Cursor.y]:sub(Cursor.x,#text[Cursor.y])
+	text[Cursor.y] = text[Cursor.y]:sub(1,Cursor.x-1)
+	Cursor.y = Cursor.y + 1
+	Cursor.x = 1
+	os.queueEvent("redraw",Cursor.y-1,Cursor.y)
+	funcs.cursor(true)
+end
+
+-- Cursor Positioning functions
+function funcs.move(key) -- moves the Cursor (up,down,left,right) with wrapping
+	if key == keys.up then
+		if Cursor.y > 1 then
+			Cursor.y = Cursor.y - 1
+			Cursor.x = math.min(#text[Cursor.y]+1,Cursor.x)
+		elseif Cursor.y == 1 then
+			Cursor.x = 1
+		end
+		os.queueEvent("redraw",Cursor.y-1,Cursor.y+1)
+		funcs.cursor(true)
+	elseif key == keys.down then
+		if Cursor.y < #text then
+			Cursor.y = Cursor.y + 1
+			Cursor.x = math.min(#text[Cursor.y]+1,Cursor.x)
+		elseif Cursor.y == #text then
+			Cursor.x = #text[#text] + 1
+		end
+		os.queueEvent("redraw",Cursor.y-1,Cursor.y+1)
+		funcs.cursor(true)
+	elseif key == keys.left then
+		if Cursor.x > 1 then
+			Cursor.x = Cursor.x - 1
+		elseif Cursor.y > 1 then
+			Cursor.y = Cursor.y - 1
+			Cursor.x = #text[Cursor.y] + 1
+		end
+		os.queueEvent("redraw",Cursor.y-1,Cursor.y+1)
+		funcs.cursor(true)
+	elseif key == keys.right then
+		if Cursor.x < #text[Cursor.y]+1 then
+			Cursor.x = Cursor.x + 1
+		elseif Cursor.y < #text then
+			Cursor.y = Cursor.y + 1
+			Cursor.x = 1
+		end
+		os.queueEvent("redraw",Cursor.y-1,Cursor.y+1)
+		funcs.cursor(true)
+	end
+end
+
+-- Screen manipulating functions
+function funcs.dialogBox(msg,options)
+	paintutils.drawFilledBox(1,1,settings.w,settings.h,colors.gray)
+	paintutils.drawFilledBox(1,3,settings.w,settings.h-2,colors.lightGray)
+	term.setCursorPos(4,4)
+	print(msg)
+	if options == 1 then
+		term.setCursorPos(4,settings.h-4)
+		term.blit("ENTER - OK","ffffffffff","5555555555")
+		term.setCursorPos(settings.w-20,settings.h-4)
+		term.blit("SPACE - CANCEL","ffffffffffffff","eeeeeeeeeeeeee")
+		while true do
+			local e = {os.pullEvent("key")}
+			if e[2] == keys.enter then
+				cursorTimer = os.startTimer(0.1)
+				specialKeys[keys.rightCtrl] = 0
+				specialKeys[keys.leftCtrl] = 0
+				return true
+			elseif e[2] == keys.space then
+				cursorTimer = os.startTimer(0.1)
+				specialKeys[keys.rightCtrl] = 0
+				specialKeys[keys.leftCtrl] = 0
+				return false
+			end
+		end
+	elseif options == 0 then
+		term.setCursorPos(settings.w-18,settings.h-4)
+		term.blit("SPACE - EXIT","ffffffffffff","eeeeeeeeeeee")
+		while true do
+			local e = {os.pullEvent("key")}
+			if e[2] == keys.space then
+				term.clear()
+				term.setCursorPos(1,1)
+				__error("Terminated")
+			end
+		end
+	elseif options == -1 then
+		term.setCursorPos(4,8)
+		term.setTextColor(colors.blue)
+		term.setBackgroundColor(colors.lightGray)
+		local a = read()
+		cursorTimer = os.startTimer(0.1)
+		specialKeys[keys.rightCtrl] = 0
+		specialKeys[keys.leftCtrl] = 0
+		specialKeys[keys.rightShift] = 0
+		specialKeys[keys.leftShift] = 0
+		return a
+	end
+end
+function funcs.scroll(dir) -- Scroll screen: -2 = left, -1 = up, 1 = down, 2 = right
+	if dir == -1 then
+		if Screen.y > 1 then
+			Screen.y = Screen.y - 1
+			os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+		end
+	elseif dir == 1 then
+		if Screen.y < #text+1 then
+			Screen.y = Screen.y + 1
+			os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+		end
+	elseif dir == -2 then
+		if Screen.x > 1 then
+			Screen.x = Screen.x - 1
+			os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+		end
+	elseif dir == 2 then
+		local l = settings.w
+		for i=1,#text do
+			if #text[i] > l then
+				l = #text[i]
+			end
+		end
+		if Screen.x+Screen.w+4 < l then
+			Screen.x = Screen.x + 1
+			os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+		end
+	end
+end
+
+function funcs.checkScreen() -- Update screen parameters
+	Screen.w, Screen.h = settings.w-settings.bottomBarHeight, settings.h-settings.rightBarWidth
+	local r = false
+	while Cursor.x < Screen.x do
+		Screen.x = Screen.x - 1
+		r = true
+	end
+	while Cursor.x > Screen.x+Screen.w-1 do
+		Screen.x = Screen.x + 1
+		r = true
+	end
+	while Cursor.y > Screen.y+Screen.h-1 do
+		Screen.y = Screen.y + 1
+		r = true
+	end
+	while Cursor.y < Screen.y do
+		Screen.y = Screen.y - 1
+		r = true
+	end
+	if r then
+		os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+	end
+end
+
+function funcs.highlightLine(line) -- provide a blittable color string of specified line
+	-- too bad I didn't have time to implement this :(
+	return (theme[theme.currentTheme].textcolor):rep(#text[line])
+
+end
+function funcs.drawLine(line) -- draw a specified line of text with offsets of Screen
+	term.setCursorPos(1,line-Screen.y+1)
+	if not pcall(string.len,text[line]) then
+		term.blit((" "):rep(Screen.w),("0"):rep(Screen.w),(theme[theme.currentTheme].background):rep(Screen.w))
+		return
+	end
+	local a = text[line]
+	local b = funcs.highlightLine(line)
+	while #a-Screen.x+1 < Screen.w do
+		a = a.." "
+		b = b.." "
+	end
+	a = a:sub(Screen.x,Screen.x+Screen.w-1)
+	b = b:sub(Screen.x,Screen.x+Screen.w-1)
+	local c = highLightGrid[line]:sub(Screen.x,Screen.x+Screen.w-1)
+	while #c < Screen.w do
+		c = c..theme[theme.currentTheme].background
+	end
+	c = c:sub(#c-Screen.w+1,#c)
+	if not pcall(term.blit,a,b,c) then
+		term.clear()
+		term.setCursorPos(1,1)
+		print(a,b,c)
+	end
+end
+
+function funcs.cursor(forceOn)
+	local _ = cursorBlink
+	if forceOn then
+		cursorBlink = true
+	end
+	term.setCursorPos(Cursor.x-Screen.x+1,Cursor.y-Screen.y+1)
+	local a = highLightGrid[Cursor.y]:sub(Cursor.x,Cursor.x)
+	if not a or #a ~= 1 then
+		a = theme[theme.currentTheme].background
+	end
+	if cursorBlink then
+		term.blit("_",theme[theme.currentTheme].cursor,a)
+		cursorBlink = false
+	else
+		os.queueEvent("redraw",Cursor.y,Cursor.y)
+		cursorBlink = true
+	end
+	if forceOn then
+		cursorBlink = _
+	end
+end
+-- Pre loop checks
+if args[1] then
+	funcs.loadFile(args[1])
+end
+
+
+
+-- Main loop
+funcs.undoPushState()
+os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+local screenSaver = settings.screenSaver and os.startTimer(60) or false
+local cursorBlink = false
+local undoStateVar = 0
+while true do
+	screenSaver = os.startTimer(60)
+	funcs.checkScreen()
+	if undoStateVar > 5 then
+		undoStateVar = 0
+		funcs.undoPushState()
+	end
+	local e = {os.pullEvent()} -- Check for all events
+	if e[1] == "error" then
+		funcs.dialogBox(msg.." "..lvl,0)
+	elseif e[1] == "term_resize" then
+
+	elseif e[1] == "redraw" then
+		for i=e[2],e[3] do
+			funcs.drawLine(i)
+		end
+	elseif e[1] == "timer" then
+		if e[2] == screenSaver then
+			funcs.screenSaver()
+		elseif e[2] == cursorTimer then
+			funcs.cursor()
+			cursorTimer = os.startTimer(0.2)
+		end
+	elseif e[1] == "mouse_click" then
+		if e[3] < Screen.w+1 then
+			if e[4] < Screen.h+1 then
+				Cursor.y = math.min(#text,e[4]+Screen.y-1)
+				Cursor.x = math.min(#text[Cursor.y]+1,e[3]+Screen.x-1)
+				os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+			end
+		end
+	elseif e[1] == "mouse_drag" then
+
+	elseif e[1] == "mouse_scroll" then
+		funcs.scroll(e[2])
+		if Screen.y > Cursor.y then
+			Cursor.y = Cursor.y + 1
+		end
+		if Screen.y+Screen.h-1 < Cursor.y then
+			Cursor.y = Cursor.y - 1
+		end
+		if Screen.x > Cursor.x then
+			Cursor.x = Cursor.x + 1
+		end
+		if Screen.x+Screen.w-1 < Cursor.x then
+			Cursor.x = Cursor.x - 1
+		end
+		Cursor.y = math.min(Cursor.y,#text)
+		Cursor.x = math.min(Cursor.x,#text[Cursor.y]+1)
+	elseif e[1] == "key" then
+		if specialKeys[keys.leftShift] == 0 and specialKeys[keys.rightShift] == 0 then
+			funcs.move(e[2])
+		end
+		if e[2] == keys.backspace then
+			funcs.backspace()
+			undoStateVar = undoStateVar + 1
+		elseif e[2] == keys.enter then
+			funcs.enter()
+			undoStateVar = undoStateVar + 1
+		end
+		if specialKeys[e[2]] then
+			specialKeys[e[2]] = 1
+		end
+		if (specialKeys[keys.rightCtrl] == 1) or (specialKeys[keys.leftCtrl] == 1) then
+			if e[2] == keys.z then
+				funcs.undo()
+			elseif e[2] == keys.s then
+				if (specialKeys[keys.rightShift] == 1) or (specialKeys[keys.leftShift] == 1) then
+					fileName = funcs.dialogBox("Save File as:",-1)
+					funcs.saveFile(fileName)
+					os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+				elseif #fileName ~= 0 then
+					funcs.saveFile(fileName)
+					os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+				else
+					fileName = funcs.dialogBox("Save File as:",-1)
+					funcs.saveFile(fileName)
+					os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+				end
+			elseif e[2] == keys.n then
+				text = {[1] = ""}
+				Cursor.x = 1
+				Cursor.y = 1
+				os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+			elseif e[2] == keys.five then
+				os.queueEvent("redraw",Screen.y,Screen.y+Screen.h-1)
+			end
+		end
+	elseif e[1] == "key_up" then
+		if specialKeys[e[2]] then
+			specialKeys[e[2]] = 0
+		end
+	elseif e[1] == "char" then
+		funcs.char(e[2])
+		undoStateVar = undoStateVar + 1
+	end
+end
