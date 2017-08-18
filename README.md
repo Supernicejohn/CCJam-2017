@@ -16,6 +16,7 @@ Tested on CraftOS 1.8 but should work under other versions too.
 Things left to implement:
 Highlighting,
 Tabs (multiple texts),
-Scrollbars (bottom+right)
+Scrollbars (bottom+right),
+Themes (halfway done)
 
 My apologies to the spirit of your free time xP
