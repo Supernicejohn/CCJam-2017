@@ -3,7 +3,7 @@ LNS is a (now) basic text editor, perhaps the spiritual succesor to my last year
 Not very impressive at all, maybe without other things in life getting in the way I could've made it better, but oh well haha :)
 
 Features:
-Opening a file: LNS \<name\>
+Opening a file: LNS \<name\>\n
 Saving: ctrl+s, or ctrl+shift+s to rename and save
 New file: ctrl+n
 Undo: ctrl+z
