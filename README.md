@@ -14,8 +14,8 @@ Moving: arrowkeys, scrolling and clicking with mouse
 Tested on CraftOS 1.8 but should work under other versions too.
 
 Things left to implement:
-Highlighting
-Tabs (multiple texts)
+Highlighting,
+Tabs (multiple texts),
 Scrollbars (bottom+right)
 
 My apologies to the spirit of your free time xP
